@@ -1,0 +1,161 @@
+import tkinter as tk
+from tkinter import messagebox
+from PIL import Image, ImageTk, ImageSequence
+import serial
+import time
+import numpy as np
+import threading
+
+# --- Settings ---
+PORT = 'COM7'
+BAUD_RATE = 9600
+CALIBRATION_TIME = 5
+MEASUREMENT_TIME = 20
+SAMPLE_RATE = 100
+GIF_PATH = r"C:\python kz\Python projects\heart.gif"
+
+# --- Signal Processing Functions ---
+def smooth(signal, window=7):
+    if len(signal) < window:
+        return signal
+    return np.convolve(signal, np.ones(window) / window, mode='same')
+
+def calculate_bpm(signal, sample_rate):
+    if len(signal) < 40:
+        return 0
+    peaks = []
+    threshold = np.mean(signal) + np.std(signal)
+    min_dist = int(sample_rate * 0.5)
+    last_peak = -min_dist
+    for i in range(1, len(signal) - 1):
+        if signal[i] > threshold and signal[i] > signal[i - 1] and signal[i] > signal[i + 1]:
+            if i - last_peak >= min_dist:
+                peaks.append(i)
+                last_peak = i
+    if len(peaks) > 1:
+        intervals = np.diff(peaks)
+        avg_interval = np.mean(intervals) / sample_rate
+        bpm = 60 / avg_interval
+        return round(bpm)
+    return 0
+
+# --- GUI Functions ---
+def animate_gif():
+    def update(frame):
+        gif_label.configure(image=frames[frame])
+        gif_label.image = frames[frame]
+        if playing_gif[0]:
+            root.after(100, update, (frame + 1) % len(frames))
+    update(0)
+
+def show_measurement_widgets():
+    name_label.pack_forget()
+    name_entry.pack_forget()
+    start_button.pack_forget()
+    gif_label.pack(pady=10)
+
+def start_measurement():
+    def run_measurement():
+        patient_name = name_entry.get()
+        if not patient_name:
+            messagebox.showwarning("Input Error", "Please enter the patient's name.")
+            return
+
+        show_measurement_widgets()
+
+        try:
+            ser = serial.Serial(PORT, BAUD_RATE, timeout=1)
+        except Exception as e:
+            messagebox.showerror("Serial Error", str(e))
+            return
+
+        status_label.config(text=f"📌 {patient_name}, place your finger on the sensor...")
+        root.update()
+        time.sleep(CALIBRATION_TIME)
+
+        status_label.config(text="✅ Measuring for 20 seconds...")
+        bpm_label.config(text="")
+        playing_gif[0] = True
+        animate_gif()
+
+        data = []
+        start_time = time.time()
+        while time.time() - start_time < MEASUREMENT_TIME:
+            try:
+                line = ser.readline().decode('utf-8').strip()
+                if line.isdigit():
+                    val = int(line)
+                    if 400 < val < 1000:
+                        data.append(val)
+            except:
+                pass
+
+        ser.close()
+        playing_gif[0] = False
+        gif_label.pack_forget()
+
+        smoothed = smooth(data)
+        bpm = calculate_bpm(smoothed, SAMPLE_RATE)
+
+        if bpm == 0:
+            condition = "No finger detected ❌"
+            color = "#6c757d"
+        elif bpm < 60:
+            condition = "Low Heart Rate ⚠️"
+            color = "#f9a825"
+        elif bpm > 100:
+            condition = "High Heart Rate 🚨"
+            color = "#d32f2f"
+        else:
+            condition = "Normal Heart Rate ✅"
+            color = "#00e676"
+
+        status_label.config(text=f"🎯 Measurement complete for {patient_name}!")
+        bpm_label.config(text=f"❤️ BPM: {bpm} | Condition: {condition}", fg=color)
+
+    threading.Thread(target=run_measurement).start()
+
+# --- GUI Setup ---
+root = tk.Tk()
+root.title("Real-Time Heart Rate Monitor")
+root.geometry("500x600")
+root.configure(bg="#000000")  # Black Background
+
+canvas = tk.Canvas(root, width=500, height=600, bg="#000000", highlightthickness=0)
+canvas.pack(fill="both", expand=True)
+
+# --- Title ---
+title_label = tk.Label(canvas, text="💓 Heart Rate Monitor", font=("Helvetica", 18, "bold"), fg="#00e5ff", bg="#000000")
+title_label.pack(pady=15)
+
+# --- Patient Info ---
+name_label = tk.Label(canvas, text="Patient Name:", font=("Helvetica", 12), fg="#00e5ff", bg="#000000")
+name_label.pack()
+name_entry = tk.Entry(canvas, font=("Helvetica", 12), width=30, bg="#424242", fg="white", insertbackground="white")
+name_entry.pack(pady=5)
+
+# --- Status and BPM ---
+status_label = tk.Label(canvas, text="", font=("Helvetica", 13), fg="#ffffff", bg="#000000")
+status_label.pack(pady=5)
+
+bpm_label = tk.Label(canvas, text="", font=("Helvetica", 16), fg="#00e676", bg="#000000")
+bpm_label.pack(pady=10)
+
+# --- Start Button ---
+start_button = tk.Button(canvas, text="Start Monitoring", font=("Helvetica", 13, "bold"), bg="#00bcd4", fg="black", padx=10, pady=5, relief="raised", command=start_measurement)
+start_button.pack(pady=20)
+
+# --- GIF Setup ---
+gif_label = tk.Label(canvas, bg="#000000")
+frames = []
+try:
+    gif = Image.open(GIF_PATH)
+    for frame in ImageSequence.Iterator(gif):
+        frame = frame.resize((180, 180))
+        frames.append(ImageTk.PhotoImage(frame))
+except Exception as e:
+    print("❌ GIF Error:", e)
+
+playing_gif = [False]
+
+root.mainloop()
