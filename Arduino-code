@@ -1,0 +1,15 @@
+// Pulse Sensor and Arduino UNO Heart Rate Monitor
+
+const int pulsePin = A0;     // Pulse Sensor connected to Analog Pin A0
+int signal;                  // Variable to hold raw sensor value
+
+void setup() {
+  Serial.begin(19200);       // Set the baud rate to match the Python script
+  pinMode(pulsePin, INPUT);  // Set pulsePin as input
+}
+
+void loop() {
+  signal = analogRead(pulsePin);  // Read the analog value from pulse sensor
+  Serial.println(signal);         // Send the value via Serial to PC
+  delay(10);                      // Sampling delay (~100Hz sampling rate)
+}
